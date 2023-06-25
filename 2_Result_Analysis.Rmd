@@ -1,0 +1,1403 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# Load Packages
+```{r}
+
+library(openxlsx)
+library(caret)
+library(glmnet)
+library(MASS)
+library(ggplot2)
+library(survival)
+library(Hmisc)
+library(ROSE)
+library(survminer)
+library(compareGroups)
+
+library(pROC)
+
+library(gcookbook)
+library(OptimalCutpoints)
+library(ggpubr)
+library(showtext)
+
+font_add('Araial','/Library/Fonts/Arial.ttf')
+
+windowsFonts(A=windowsFont("Araial")) 
+
+
+```
+
+# 1.1 Load Date
+```{r}
+rm(list = ls())
+Feature_All <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Split.xlsx", sheet=1) 
+Feature_All$agegroup <- ifelse(Feature_All$age <50, "<50", ">=50")
+
+nume <- c("OS", "DFS")
+Feature_All[nume] <- lapply(Feature_All[nume], as.numeric)
+
+nume <- as.numeric(which(names(Feature_All) == "patientname"))
+Index_IMG <- c(1:(nume-1))
+Index_CLI <- c(nume:length(Feature_All))
+
+Feature_IMG <- apply(Feature_All[,Index_IMG], 2, as.numeric)
+Feature_CLI <- Feature_All[, Index_CLI]
+
+Index_Train <- which(Feature_All$Split == "Train")
+Index_TestInt <- which(Feature_All$Split == "TestInt")
+Index_TestExt <- which(Feature_All$Split == "TestExt")
+
+
+```
+
+
+```{r}
+IMG <- c("T2_wavelet.LLH_glcm_JointEntropy", "T2_wavelet.LHH_firstorder_Median",
+         "DWI_original_shape_Sphericity","DWI_wavelet.HHL_gldm_LargeDependenceHighGrayLevelEmphasis","DWI_wavelet.LLL_glcm_Correlation",
+         "DWI_wavelet.LLL_firstorder_Skewness")
+Feature_IMG <- Feature_IMG[, IMG]
+
+Feature_All <- data.frame(Feature_IMG, Feature_CLI)
+write.xlsx(Feature_All, "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Analysis.xlsx")
+
+```
+
+# 1.1 Load Date
+```{r}
+rm(list = ls())
+Feature_All <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Analysis.xlsx", sheet=1) #合并两个Cox文件
+Feature_All$agegroup <- ifelse(Feature_All$age <50, "<50", ">=50")
+
+nume <- c("OS", "DFS")
+Feature_All[nume] <- lapply(Feature_All[nume], as.numeric)
+
+nume <- as.numeric(which(names(Feature_All) == "patientname"))
+Index_IMG <- c(1:(nume-1))
+Index_CLI <- c(nume:length(Feature_All))
+
+Feature_IMG <- apply(Feature_All[,Index_IMG], 2, as.numeric)
+Feature_CLI <- Feature_All[, Index_CLI]
+
+Index_LORC <- which(Feature_All$Split == "LORC")
+Index_Train <- which(Feature_All$Split == "Train")
+Index_TestInt <- which(Feature_All$Split == "TestInt")
+Index_TestExt <- which(Feature_All$Split == "TestExt")
+
+# Index_LORC <- which(Feature_All$Split_All == "LORC")
+# Index_Train <- which(Feature_All$Split_All == "Train")
+# Index_TestInt <- which(Feature_All$Split_All == "TestInt")
+# Index_TestExt <- which(Feature_All$Split_All == "TestExt")
+
+```
+
+
+# 2 Transform data
+```{r}
+
+nume <- c("age","CEA_1", "CEA_2", "CA199_1", "CA199_2", "DFSDAYS", "OSDAYS", "Riskscore", "Riskscore_diff", "Riskscore_All")
+Feature_All[nume] <- lapply(Feature_All[nume], as.numeric)
+
+
+Feature_All$CEA_1c[Feature_All$CEA_1 <=5] <- "Negative"
+Feature_All$CEA_1c[Feature_All$CEA_1 >5] <- "Positive"
+Feature_All$CEA_2c[Feature_All$CEA_2 <=5] <- "Negative"
+Feature_All$CEA_2c[Feature_All$CEA_2 >5] <- "Positive"
+Feature_All$CA199_1c[Feature_All$CA199_1 <= 37] <- "Negative"
+Feature_All$CA199_1c[Feature_All$CA199_1 > 37] <- "Positive"
+Feature_All$CA199_2c[Feature_All$CA199_2 <= 37] <- "Negative"
+Feature_All$CA199_2c[Feature_All$CA199_2 > 37] <- "Positive"
+
+Feature_All$yTNM[Feature_All$yTNM == "0"] <- "0/I"
+Feature_All$yTNM[Feature_All$yTNM == "I"] <- "0/I"
+# Feature_All$yTNM[Feature_All$yTNM == "II"] <- "II/III"
+# Feature_All$yTNM[Feature_All$yTNM == "III"] <- "II/III"
+
+# Feature_All$cTNM[Feature_All$cTNM == "0"] <- "0/I"
+# Feature_All$cTNM[Feature_All$cTNM == "I"] <- "0/I"
+# Feature_All$cTNM[Feature_All$cTNM == "II"] <- "II/III"
+# Feature_All$cTNM[Feature_All$cTNM == "III"] <- "II/III"
+# Feature_All$cTNM[Feature_All$cTNM == "IV"] <- "II/III"
+
+Feature_All$cT[Feature_All$cT == "T0"] <- "negative"
+Feature_All$cT[Feature_All$cT == "T1"] <- "negative"
+Feature_All$cT[Feature_All$cT == "T2"] <- "negative"
+Feature_All$cT[Feature_All$cT == "T3"] <- "positive"
+Feature_All$cT[Feature_All$cT == "T4"] <- "positive"
+
+Feature_All$yT[Feature_All$yT == "T0"] <- "negative"
+Feature_All$yT[Feature_All$yT == "T1"] <- "negative"
+Feature_All$yT[Feature_All$yT == "T2"] <- "negative"
+Feature_All$yT[Feature_All$yT == "T3"] <- "positive"
+Feature_All$yT[Feature_All$yT == "T4"] <- "positive"
+
+Feature_All$differentiation[Feature_All$differentiation == "high"] <- "negative"
+Feature_All$differentiation[Feature_All$differentiation == "moderate"]<- "negative"
+Feature_All$differentiation[Feature_All$differentiation == "poor"]<- "positive"
+
+Feature_All$DFSDAYS <- Feature_All$DFSDAYS/30
+Feature_All$OSDAYS <- Feature_All$OSDAYS/30
+
+Feature_All$yN[Feature_All$yN == "N0"] <-  "negative"
+Feature_All$yN[Feature_All$yN == "N1"] <-  "positive"
+Feature_All$yN[Feature_All$yN == "N2"] <-  "positive"
+
+Feature_All$RS_cutoff[Feature_All$RS_cutoff == "low"] <-  "negative"
+Feature_All$RS_cutoff[Feature_All$RS_cutoff == "high"] <-  "positive"
+Feature_All$RS_cutoff_diff[Feature_All$RS_cutoff_diff == "low"] <-  "negative"
+Feature_All$RS_cutoff_diff[Feature_All$RS_cutoff_diff == "high"] <-  "positive"
+
+
+fac <- c("gender","location","cTNM","cT","cN","CEA_2","CA199_2","differentiation", "yTNM","yT","yN", "TRG","CRM", "LVI", "PNI", "pre_chemo", "post_chemo", "pre_radio", "post_radio", "gen_mutations")
+Feature_All[fac] <- lapply(Feature_All[fac], as.factor)
+
+```
+
+
+# 3  DescrTable
+```{r}
+fac <- c("Split","age","gender","BMI","location","cTNM","cT","cN","CEA_1c","CA199_1c","differentiation", "yTNM","yT","yN", "LVI","pre_chemo",
+         "post_chemo","DFS","OS","DFSDAYS","OSDAYS","Recurrence","Metastasis","agegroup")
+
+mydata <- Feature_All[, fac]
+res_tab <- descrTable(Split~., data = mydata, show.all = TRUE, digits = 2, method =  NA)
+res_tab
+export2xls(res_tab, file="E:/Qian/ProjectAge/Data/Data_Excel/Table 1.xlsx")
+
+
+mydata <- Feature_All[-Index_LORC, fac]
+res_tab <- descrTable(Split~., data = mydata, show.all = TRUE, digits = 2, method =  NA)
+res_tab
+export2xls(res_tab, file="E:/Qian/ProjectAge/Data/Data_Excel/Table E1.xlsx")
+
+```
+
+# 4 HR-CLI
+```{r}
+hr_f <- function(mydata, fac){
+    for (i in 1:length(fac)){
+      tmp_formu <- as.formula(paste('Surv(DFSDAYS, DFS)~', fac[i]))
+      univ_models <- coxph(tmp_formu, data = mydata)
+      tmp_sum <- summary(univ_models)
+      HR_1 <- rownames(tmp_sum[["conf.int"]])
+      HR_2 <- round(tmp_sum[["conf.int"]][, 1],digits = 2)
+      HR_3 <- round(tmp_sum[["conf.int"]][, 3],digits = 2)
+      HR_4 <- round(tmp_sum[["conf.int"]][, 4],digits = 2)
+      HR_5 <- paste0(HR_2,"[", HR_3,", ", HR_4,"]")
+      HR_6 <- round(tmp_sum[["coefficients"]][, 5],digits = 3)
+      HR <- rbind(HR, cbind(HR_1,HR_2,HR_3,HR_4,HR_5,HR_6))
+
+    }
+  return(HR)
+}
+
+fac <- c("age", "gender", "BMI", 
+         "location", "cTNM", "cT", "cN", 
+         "CEA_1c", "CA199_1c",
+         "differentiation", "yTNM", "yT", "yN","LVI",  
+         "pre_chemo", "post_chemo",
+         "Riskscore","Riskscore_diff","Riskscore_All")
+mydata <- Feature_All[Index_Train, ]
+HR <- data.frame()
+HR <- hr_f(mydata,fac)
+names(HR) <- c("parameter","HR","HR_low","HR_high", "HR[95%CI]", "p_value")
+write.xlsx(HR, "E:/Qian/ProjectAge/Data/Data_Excel/CLI_Uni_Cox.xlsx")
+
+# multi
+hr_f <- function(mydata, fac){
+  tmp_formu <- as.formula(paste('Surv(DFSDAYS, DFS)~', paste0(fac,collapse = "+")))
+  univ_models <- coxph(tmp_formu, data = mydata)
+  tmp_sum <- summary(univ_models)
+  HR_1 <- rownames(tmp_sum[["conf.int"]])
+  HR_2 <- round(tmp_sum[["conf.int"]][, 1],digits = 2)
+  HR_3 <- round(tmp_sum[["conf.int"]][, 3],digits = 2)
+  HR_4 <- round(tmp_sum[["conf.int"]][, 4],digits = 2)
+  HR_5 <- paste0(HR_2,"[", HR_3,", ", HR_4,"]")
+  HR_6 <- round(tmp_sum[["coefficients"]][, 5],digits = 3)
+  HR <- rbind(HR, cbind(HR_1,HR_2,HR_3,HR_4,HR_5,HR_6))
+  return(HR)
+}
+
+fac <- c("location","CEA_1c","CA199_1c","differentiation",  "yT", "yN","LVI")
+fac <- c("CEA_1c","differentiation",  "yT", "yN")
+mydata <- Feature_All[Index_Train, ]
+HR <- data.frame()
+HR <- hr_f(mydata,fac)
+names(HR) <- c("parameter","HR","HR_low","HR_high", "HR[95%CI]", "p_value")
+write.xlsx(HR, "E:/Qian/ProjectAge/Data/Data_Excel/CLI_Multi_Cox.xlsx")
+
+```
+
+
+# 4 C-Index
+```{r}
+
+cindex_f <- function(multi_models,mydata,i){
+
+  fp <- predict(multi_models, mydata)
+  tmp_C=rcorr.cens(fp, Surv(mydata$DFSDAYS, mydata$DFS == 1))
+  Cindex[i,1] <- 1-tmp_C[1]
+  Cindex[i,2] <- tmp_C[3]
+  Cindex[i,3] <- 1-tmp_C[1]-0.98*tmp_C[3]
+  Cindex[i,4] <- 1-tmp_C[1]+0.98*tmp_C[3]
+  Cindex[i,5] <- paste0(round(Cindex[i,1], digits = 2),"[",
+                        round(Cindex[i,3], digits = 2),",",
+                        round(Cindex[i,4], digits = 2),"]")
+  return(Cindex)
+
+}
+
+cindex_data <- function(fac){
+
+  mydata <- Feature_All[Index_Train, ]
+  tmp_formu <- as.formula(paste('Surv(DFSDAYS, DFS)~', paste0(fac,collapse = "+")))
+  
+  multi_models<- coxph(tmp_formu, data =  mydata)
+  summary(multi_models)
+  i=1
+  Cindex_1 <- cindex_f(multi_models,mydata, i)
+  mydata <- Feature_All[Index_TestInt, ]
+  Cindex_2 <- cindex_f(multi_models,mydata, i)
+  
+  mydata <- Feature_All[Index_TestExt, ]
+  Cindex_3 <- cindex_f(multi_models,mydata, i)
+  
+  mydata <- Feature_All[Index_LORC, ]
+  Cindex_4 <- cindex_f(multi_models,mydata, i)
+  
+  Cindex <- rbind(Cindex_1, Cindex_2, Cindex_3,Cindex_4)
+  colnames(Cindex) <- c("Corcord","Se", "Lower", "Upper","Cindex")
+  row.names(Cindex) <- c("train", "testint", "testext","LORC")
+  return(Cindex)
+  
+}
+
+# yTNM
+Cindex <- data.frame()
+fac <- c("yTNM")
+Cindex_yTNM <- cindex_data(fac)
+
+# Cli
+Cindex <- data.frame()
+fac <- c("CEA_1c","yN")
+Cindex_cli <- cindex_data(fac)
+
+# Riskscore_diff
+Cindex <- data.frame()
+fac <- c("Riskscore_diff")
+Cindex_Riskscore_diff <- cindex_data(fac)
+
+# Riskscore
+Cindex <- data.frame()
+fac <- c("Riskscore")
+Cindex_Riskscore <- cindex_data(fac)
+
+# Diff
+Cindex <- data.frame()
+fac <- c("CEA_1c","Riskscore_diff")
+Cindex_diff <- cindex_data(fac)
+
+# Radiomis
+Cindex <- data.frame()
+fac <- c("CEA_1c","Riskscore")
+Cindex_radiomics_pre <- cindex_data(fac)
+
+
+# Radiomis
+Cindex <- data.frame()
+fac <- c("CEA_1c","yN","Riskscore")
+Cindex_radiomics <- cindex_data(fac)
+
+
+#save
+tmp_cindex <- data.frame(cbind(Cindex_yTNM$Cindex, Cindex_cli$Cindex, Cindex_Riskscore_diff$Cindex , Cindex_Riskscore$Cindex,Cindex_diff$Cindex, Cindex_radiomics$Cindex))
+colnames(tmp_cindex) <- c("yTNM", "Cli_Path", "Riskscore_diff","Riskscore","Cindex_diff", "Radiomics")
+tmp_cindex$cohort <- c("train", "testint", "testext","LORC")
+
+write.xlsx(tmp_cindex , "E:/Qian/ProjectAge/Data/Data_Excel/C_Index.xlsx")
+
+# C-Index Compared
+library(BSDA)
+
+# 计算Z值
+
+C_compare <- function(fac){
+  i <- 1
+  n1 <- 158;n2 <- 158
+  z <- (fac[i,1] - Cindex_yTNM[i,1]) / sqrt(fac[i,2]^2/n1 + Cindex_yTNM[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  i <- 2
+  n1 <- 65;n2 <- 65
+  z <- (fac[i,1] - Cindex_yTNM[i,1]) / sqrt(fac[i,2]^2/n1 + Cindex_yTNM[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  i <- 3
+  n1 <- 41;n2 <- 41
+  z <- (fac[i,1] - Cindex_yTNM[i,1]) / sqrt(fac[i,2]^2/n1 + Cindex_yTNM[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  
+  i <- 1
+  n1 <- 158;n2 <- 158
+  z <- (fac[i,1] - Cindex_cli[i,1]) / sqrt(fac[i,2]^2/n1 + Cindex_cli[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  i <- 2
+  n1 <- 65;n2 <- 65
+  z <- (fac[i,1] - Cindex_cli[i,1]) / sqrt(fac[i,2]^2/n1 + Cindex_cli[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  i <- 3
+  n1 <- 41;n2 <- 41
+  z <- (fac[i,1] - Cindex_cli[i,1]) / sqrt(fac[i,2]^2/n1 + Cindex_cli[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  
+  i <- 1
+  n1 <- 158;n2 <- 158
+  z <- (fac[i,1] - Cindex_Riskscore_diff[i,1]) / sqrt(fac[i,2]^2/n1 + Cindex_Riskscore_diff[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  i <- 2
+  n1 <- 65;n2 <- 65
+  z <- (fac[i,1] - Cindex_Riskscore_diff[i,1]) / sqrt(fac[i,2]^2/n1 + Cindex_Riskscore_diff[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  i <- 3
+  n1 <- 41;n2 <- 41
+  z <- (fac[i,1] - Cindex_Riskscore_diff[i,1]) / sqrt(fac[i,2]^2/n1 + Cindex_Riskscore_diff[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  
+  i <- 1
+  n1 <- 158;n2 <- 158
+  z <- (fac[i,1] -  Cindex_Riskscore[i,1]) / sqrt(fac[i,2]^2/n1 +  Cindex_Riskscore[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  i <- 2
+  n1 <- 65;n2 <- 65
+  z <- (fac[i,1] -  Cindex_Riskscore[i,1]) / sqrt(fac[i,2]^2/n1 +  Cindex_Riskscore[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  i <- 3
+  n1 <- 41;n2 <- 41
+  z <- (fac[i,1] -  Cindex_Riskscore[i,1]) / sqrt(fac[i,2]^2/n1 +  Cindex_Riskscore[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  
+  i <- 1
+  n1 <- 158;n2 <- 158
+  z <- (fac[i,1] - Cindex_diff[i,1]) / sqrt(fac[i,2]^2/n1 +Cindex_diff[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  i <- 2
+  n1 <- 65;n2 <- 65
+  z <- (fac[i,1] - Cindex_diff[i,1]) / sqrt(fac[i,2]^2/n1 + Cindex_diff[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  i <- 3
+  n1 <- 41;n2 <- 41
+  z <- (fac[i,1] - Cindex_diff[i,1]) / sqrt(fac[i,2]^2/n1 + Cindex_diff[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  
+  i <- 1
+  n1 <- 158;n2 <- 158
+  z <- (fac[i,1] - Cindex_radiomics[i,1]) / sqrt(fac[i,2]^2/n1 +Cindex_radiomics[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  i <- 2
+  n1 <- 65;n2 <- 65
+  z <- (fac[i,1] - Cindex_radiomics[i,1]) / sqrt(fac[i,2]^2/n1 + Cindex_radiomics[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+  i <- 3
+  n1 <- 41;n2 <- 41
+  z <- (fac[i,1] - Cindex_radiomics[i,1]) / sqrt(fac[i,2]^2/n1 + Cindex_radiomics[i,2]^2/n2)
+  p <- 2 * (1 - pnorm(abs(z)))
+  Ctest <- append(Ctest,p)
+ 
+  return(Ctest)
+}
+Ctest <- c()
+Ctest <- C_compare(Cindex_Riskscore)
+a <- as.data.frame(round(matrix (Ctest, nrow =3,byrow =FALSE),digits = 3))
+
+
+
+###
+mydata <- Feature_All[Index_Train, ]
+
+
+#计算change of C statistic
+
+CsChange(fit1,fit2,data = mydata,nb=20)
+library(CsChange)
+library(rms)
+
+yTNM=Feature_All$yTNM; CEA_1c=Feature_All$CEA_1c; yN=Feature_All$yN;
+Riskscore_diff=Feature_All$Riskscore_diff; Riskscore=Feature_All$Riskscore
+
+data=data.frame(dt=Feature_All$DFSDAYS,e=Feature_All$DFS,
+                dt1=Feature_All$DFSDAYS,dt2=Feature_All$DFSDAYS,
+                e1=Feature_All$DFS,e2=Feature_All$DFS,
+                yTNM, CEA_1c, yN,
+                Riskscore_diff, Riskscore)
+dd=datadist(yTNM, CEA_1c, yN,
+                Riskscore_diff, Riskscore)
+options(datadist='dd')
+
+mydata <- data[Index_Train, ]
+f1 <- coxph(Surv(dt, e)~yTNM, data=mydata)
+f2 <- coxph(Surv(dt, e)~CEA_1c+yN, data=mydata)
+f3 <- coxph(Surv(dt, e)~Riskscore_diff, data=mydata)
+f4 <- coxph(Surv(dt, e)~Riskscore, data=mydata)
+f5 <- coxph(Surv(dt, e)~CEA_1c+Riskscore_diff, data=mydata)
+f6 <- coxph(Surv(dt, e)~CEA_1c+yN+Riskscore, data=mydata)
+
+
+mydata <- data[Index_TestExt, ]
+CsChange(f1,f6,data = mydata,nb=1000)
+
+
+```
+
+
+# 5 K-M Curve
+```{r}
+hr_f <- function(mydata, fac,i){
+
+    tmp_formu <- as.formula(paste('Surv(DFSDAYS, DFS)~', fac))
+    univ_models <- coxph(tmp_formu, data = mydata)
+    tmp_sum <- summary(univ_models)
+    HR_1 <- rownames(tmp_sum[["conf.int"]])
+    HR_2 <- round(tmp_sum[["conf.int"]][, 1],digits = 2)
+    HR_3 <- round(tmp_sum[["conf.int"]][, 3],digits = 2)
+    HR_4 <- round(tmp_sum[["conf.int"]][, 4],digits = 2)
+    HR_5 <- paste0(HR_2,"[", HR_3,", ", HR_4,"]")
+    HR_6 <- round(tmp_sum[["coefficients"]][, 5],digits = 3)
+    HR<- cbind(HR_1,HR_2,HR_3,HR_4,HR_5,HR_6)
+    return(HR)
+
+}
+
+
+mydata <- Feature_All[Index_Train,]
+multi_models<- coxph(Surv(DFSDAYS, DFS == 1)~CEA_1c+yN+Riskscore, data =  mydata)
+multi_models<- coxph(Surv(DFSDAYS, DFS == 1)~Riskscore, data =  mydata)
+summary(multi_models)
+Feature_All$risk <- predict(multi_models, Feature_All)
+
+cutoff_value<-surv_cutpoint(Feature_All[Index_Train,], time="DFSDAYS", event="DFS", variables="risk")
+Feature_All$risk_cutoff[Feature_All$risk < cutoff_value[["cutpoint"]][["cutpoint"]]] <- "Alow"
+Feature_All$risk_cutoff[Feature_All$risk >= cutoff_value[["cutpoint"]][["cutpoint"]]] <- "Bhigh"
+write.xlsx(Feature_All , "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Result.xlsx")
+
+HR <- data.frame()
+fac <- "risk_cutoff"
+
+mydata <- Feature_All[Index_Train, ]
+HR_1 <- hr_f(mydata,fac)
+
+mydata <- Feature_All[Index_TestInt, ]
+HR_2 <- hr_f(mydata,fac)
+
+mydata <- Feature_All[Index_TestExt, ]
+HR_3 <- hr_f(mydata,fac)
+
+HR <- rbind(HR_1,HR_2,HR_3)
+
+mydata <- Feature_All[Index_Train, ]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g1 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff train")
+g1
+
+mydata <- Feature_All[Index_TestInt, ]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g2 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff test")
+g2
+
+mydata <- Feature_All[Index_TestExt, ]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g3 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff train")
+g3
+
+
+# tnm_0
+mydata <- Feature_All[Index_Train, ]
+mydata <- mydata[mydata$yTNM == "0/I",]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g4 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff train")
+g4
+
+mydata <- Feature_All[Index_TestInt, ]
+mydata <- mydata[mydata$yTNM == "0/I",]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g5 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff test")
+g5
+
+mydata <- Feature_All[Index_TestExt, ]
+mydata <- mydata[mydata$yTNM == "0/I",]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g6 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff train")
+g6
+
+# tnm_II
+mydata <- Feature_All[Index_Train, ]
+mydata <- mydata[mydata$yTNM == "II",]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g7 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff train")
+g7
+
+mydata <- Feature_All[Index_TestInt, ]
+mydata <- mydata[mydata$yTNM == "II",]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g8 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff test")
+g8
+
+mydata <- Feature_All[Index_TestExt, ]
+mydata <- mydata[mydata$yTNM == "II",]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g9 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff train")
+g9
+
+# tnm_III
+mydata <- Feature_All[Index_Train, ]
+mydata <- mydata[mydata$yTNM == "III",]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g10 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff train")
+g10
+
+mydata <- Feature_All[Index_TestInt, ]
+mydata <- mydata[mydata$yTNM == "III",]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g11 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff test")
+g11
+
+mydata <- Feature_All[Index_TestExt, ]
+mydata <- mydata[mydata$yTNM == "III",]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g12 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff train")
+g12
+
+
+
+showtext_auto(enable=T)
+pdf("Figure_res_km.pdf")
+g1
+g2
+g3
+g4
+g5
+g6
+g7
+g8
+g9
+g10
+g11
+g12
+while (!is.null(dev.list())) dev.off() 
+showtext_auto(enable=F)
+
+```
+# 6 KM
+```{r}
+mydata <- Feature_All[-Index_LORC, ]
+mydata <- mydata[mydata$yTNM == "0/I" | mydata$yTNM == "II",]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g1 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff train")
+g1
+
+mydata <- Feature_All[-Index_LORC, ]
+mydata <- mydata[mydata$yTNM == "II",]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g2 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff train")
+g2
+
+
+mydata <- Feature_All[-Index_LORC, ]
+mydata <- mydata[mydata$yTNM == "III",]
+fit <- survfit(Surv(DFSDAYS, DFS)~risk_cutoff, data=mydata)
+g3 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff train")
+g3
+
+
+mydata <- Feature_All
+mydata <- mydata[mydata$agegroup == "<50",]
+fit <- survfit(Surv(DFSDAYS, DFS)~yN, data=mydata)
+g1<- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff train")
+g1
+
+
+mydata <- Feature_All
+mydata <- mydata[mydata$agegroup == ">=50",]
+fit <- survfit(Surv(DFSDAYS, DFS)~yN, data=mydata)
+g2 <- ggsurvplot(fit, pval = TRUE,risk.table = TRUE, risk.table.height = 0.25,xlim= c(0,65),break.x.by=12 ,palette = c("#3fa9f5","#ff1d25"), legend.title = "DFS KM curve for RS_cutoff train")
+g2
+
+
+showtext_auto(enable=T)
+pdf("Figure_tnm_km.pdf")
+g1
+g2
+
+while (!is.null(dev.list())) dev.off() 
+showtext_auto(enable=F)
+
+
+hr_f <- function(mydata, fac){
+  tmp_formu <- as.formula(paste('Surv(DFSDAYS, DFS)~', paste0(fac,collapse = "+")))
+  univ_models <- coxph(tmp_formu, data = mydata)
+  tmp_sum <- summary(univ_models)
+  HR_1 <- rownames(tmp_sum[["conf.int"]])
+  HR_2 <- round(tmp_sum[["conf.int"]][, 1],digits = 2)
+  HR_3 <- round(tmp_sum[["conf.int"]][, 3],digits = 2)
+  HR_4 <- round(tmp_sum[["conf.int"]][, 4],digits = 2)
+  HR_5 <- paste0(HR_2,"[", HR_3,", ", HR_4,"]")
+  HR_6 <- round(tmp_sum[["coefficients"]][, 5],digits = 3)
+  HR <- rbind(HR, cbind(HR_1,HR_2,HR_3,HR_4,HR_5,HR_6))
+  return(HR)
+}
+
+fac <- c("yN")
+mydata <- Feature_All
+mydata <- mydata[mydata$agegroup == ">=50",]
+HR <- data.frame()
+HR <- hr_f(mydata,fac)
+
+
+
+
+```
+
+
+# 6 ROC
+```{r}
+library(nricens)
+library(survIDINRI)
+library(PredictABEL)
+library(Rmisc)
+
+fac <- c("DFS","DFSDAYS","Riskscore","Riskscore_diff","yN","CEA_1c","yTNM","Split")
+mydata <- Feature_All[Index_Train,fac]
+mydata <- mydata[complete.cases(mydata),]
+
+tmp_formu1 <- as.formula(paste('Surv(DFSDAYS, DFS)~', paste0("yTNM")))
+tmp_formu2 <- as.formula(paste('Surv(DFSDAYS, DFS)~', paste0("yN+CEA_1c")))
+tmp_formu3 <- as.formula(paste('Surv(DFSDAYS, DFS)~', paste0("Riskscore_diff")))
+tmp_formu4 <- as.formula(paste('Surv(DFSDAYS, DFS)~', paste0("Riskscore")))
+tmp_formu5 <- as.formula(paste('Surv(DFSDAYS, DFS)~', paste0("Riskscore_diff+CEA_1c")))
+tmp_formu6 <- as.formula(paste('Surv(DFSDAYS, DFS)~', paste0("Riskscore+yN+CEA_1c")))
+
+t <- 12
+risk_f <- function(mydata, tmp_formu, t){
+  mydata_tmp <- mydata
+  multi_models <- coxph(tmp_formu, data=mydata_tmp, x=TRUE)
+  
+  mydata_tmp$risk <- predict(multi_models, mydata_tmp)
+  
+  mydata_tmp <- mydata_tmp[mydata_tmp$DFSDAYS >= t | mydata_tmp$DFS == 1, ]
+  mydata_tmp$DFS[mydata_tmp$DFSDAYS >= t] <- 0
+  
+  roc_r <- roc(DFS~risk, data = mydata_tmp,levels =c(0,1), direction ="<")
+  roc_val <- paste0(round(ci.auc(roc_r)[2],digits = 2)," [ ",
+                    round(ci.auc(roc_r)[1],digits = 2),", ",
+                    round(ci.auc(roc_r)[3],digits = 2),"]")
+  
+  return(list(roc_r, roc_val))
+
+}
+
+roc_f <- function(mydata, tmp_formu1,tmp_formu2,tmp_formu3,tmp_formu4,tmp_formu5,tmp_formu6,t1){
+  
+  roc1 <- risk_f(mydata,tmp_formu1,t1)
+  roc2 <- risk_f(mydata,tmp_formu2,t1)
+  roc3 <- risk_f(mydata,tmp_formu3,t1)
+  roc4 <- risk_f(mydata,tmp_formu4,t1)
+  roc5 <- risk_f(mydata,tmp_formu5,t1)
+  roc6 <- risk_f(mydata,tmp_formu6,t1)
+  
+  ggroc <- ggroc(list(pTNM = roc1[[1]], cli = roc2[[1]], 
+                      Riskscore_diff = roc3[[1]], Riskscore = roc4[[1]], 
+                      diff_all = roc5[[1]], all = roc6[[1]]),
+                 legacy.axes = TRUE,linetype=1,size=1)
+  
+  ggroc_all <- ggroc+
+    theme_bw()+
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+    theme(text=element_text(size = 12, family = "A", face="bold"))+
+    theme(legend.position=c(0.7,0.15))+
+    geom_abline(intercept=seq(-100, 100, 25),slope=1,colour="grey",linetype=6,size = 1) +
+    theme(axis.title=element_text(size=10, face="bold", family = "A")) +  
+    theme(axis.text=element_text(size=10, face="bold", family = "A"))+
+    scale_color_discrete(name= "",
+                        breaks = c('pTNM',"cli", "Riskscore_diff", "Riskscore","diff_all","all"),
+                        labels =   c(paste0('pTNM AUC: ',roc1[[2]]), 
+                                     paste0('EORC-based ClinPath AUC: ',roc2[[2]]), 
+                                     paste0('Differences-based Radiom AUC: ',roc3[[2]]), 
+                                     paste0('EORC-based Radiom AUC: ',roc4[[2]]), 
+                                     paste0('Difference-based ClinPath-Radiom AUC: ',roc5[[2]]), 
+                                     paste0('EORC-based RadioClinPath AUC: ',roc6[[2]])))+
+    ggtitle("ROC Curves in All Lesions")
+  
+  ggroc_all
+# cli_roc
+}
+
+
+fac <- c("DFS","DFSDAYS","Riskscore","Riskscore_diff","yN","CEA_1c","yTNM","Split")
+mydata <- Feature_All[Index_Train,fac]
+mydata <- mydata[complete.cases(mydata),]
+
+t1 <- 12
+roc_f(mydata, tmp_formu1,tmp_formu2,tmp_formu3,tmp_formu4,tmp_formu5,tmp_formu6,t1)
+
+t1 <- 36
+roc_f(mydata, tmp_formu1,tmp_formu2,tmp_formu3,tmp_formu4,tmp_formu5,tmp_formu6,t1)
+
+t1 <- 60
+roc_f(mydata, tmp_formu1,tmp_formu2,tmp_formu3,tmp_formu4,tmp_formu5,tmp_formu6,t1)
+
+
+showtext_auto(enable=T)
+pdf("Figure_res_1.pdf",width=7,height=7)
+t1 <- 12
+roc_f(mydata, tmp_formu1,tmp_formu2,tmp_formu3,tmp_formu4,tmp_formu5,tmp_formu6,t1)
+
+t1 <- 36
+roc_f(mydata, tmp_formu1,tmp_formu2,tmp_formu3,tmp_formu4,tmp_formu5,tmp_formu6,t1)
+
+t1 <- 60
+roc_f(mydata, tmp_formu1,tmp_formu2,tmp_formu3,tmp_formu4,tmp_formu5,tmp_formu6,t1)
+while (!is.null(dev.list())) dev.off() 
+showtext_auto(enable=F)
+
+
+
+# compareC
+risk_f <- function(mydata, tmp_formu, t){
+  mydata_tmp <- mydata
+  f <- coxph(tmp_formu, data=mydata, x=TRUE)
+  
+  mydata_tmp$risk <- get.risk.coxph(f, t0=t)
+  
+  mydata_tmp <- mydata_tmp[mydata_tmp$DFSDAYS >= t | mydata_tmp$DFS == 1, ]
+  mydata_tmp$DFS[mydata_tmp$DFSDAYS >= t] <- 0
+  
+  roc_r <- roc(DFS~risk, data = mydata_tmp,levels =c(0,1), direction ="<")
+  ci.auc(roc_r)
+  roc_r
+}
+
+t1 <- 1825
+fac <- c("DFS","DFSDAYS","Riskscore","Riskscore_diff","yN","CEA_1c","yTNM")
+mydata <- Feature_All[-Index_LORC,fac]
+mydata$DFSDAYS <- mydata$DFSDAYS*30
+mydata <- mydata[complete.cases(mydata),]
+
+tmp_formu1 <- as.formula(paste('Surv(DFSDAYS, DFS)~', paste0("yTNM")))
+tmp_formu5 <- as.formula(paste('Surv(DFSDAYS, DFS)~', paste0("Riskscore+yN+CEA_1c")))
+roc1 <- risk_f(mydata,tmp_formu1,t1)
+roc5 <- risk_f(mydata,tmp_formu5,t1)
+roc.test (roc1,roc5,method = 'delong')
+
+```
+
+# 7 ROC Table
+```{r}
+
+
+cindex_f <- function(multi_models,mydata,t){
+  mydata_tmp <- mydata
+  mydata_tmp$risk <- predict(multi_models, mydata)
+  
+  mydata_tmp <- mydata_tmp[mydata_tmp$DFSDAYS >= t | mydata_tmp$DFS == 1, ]
+  mydata_tmp$DFS[mydata_tmp$DFSDAYS >= t] <- 0
+  roc_r <- roc(DFS~risk, data = mydata_tmp,levels =c(0,1), direction ="<")
+  roc_val <- paste0(round(ci.auc(roc_r)[2],digits = 2)," [ ",
+                    round(ci.auc(roc_r)[1],digits = 2),", ",
+                    round(ci.auc(roc_r)[3],digits = 2),"]")
+  return(roc_val)
+
+}
+
+
+
+cindex_data <- function(fac,mydata){
+
+  mydata_tmp <- mydata[Index_Train, ]
+  tmp_formu <- as.formula(paste('Surv(DFSDAYS, DFS)~', paste0(fac,collapse = "+")))
+  multi_models<- coxph(tmp_formu, data =  mydata_tmp)
+  roc_val <- append(roc_val,cindex_f(multi_models,mydata_tmp, t1))
+  roc_val <- append(roc_val,cindex_f(multi_models,mydata_tmp, t2))
+  roc_val <- append(roc_val,cindex_f(multi_models,mydata_tmp, t3))
+  
+  mydata_tmp <- mydata[Index_TestInt, ]
+  roc_val <- append(roc_val,cindex_f(multi_models,mydata_tmp, t1))
+  roc_val <- append(roc_val,cindex_f(multi_models,mydata_tmp, t3))
+  roc_val <- append(roc_val,cindex_f(multi_models,mydata_tmp, t3))
+  
+  mydata_tmp <- mydata[Index_TestExt, ]
+  roc_val <- append(roc_val,cindex_f(multi_models,mydata_tmp, t1))
+  roc_val <- append(roc_val,cindex_f(multi_models,mydata_tmp, t2))
+  roc_val <- append(roc_val,cindex_f(multi_models,mydata_tmp, t3))
+  
+  mydata_tmp <- mydata[Index_LORC, ]
+  roc_val <- append(roc_val,cindex_f(multi_models,mydata_tmp, t1))
+  roc_val <- append(roc_val,cindex_f(multi_models,mydata_tmp, t2))
+  roc_val <- append(roc_val,cindex_f(multi_models,mydata_tmp, t3))
+
+  return(roc_val)
+  
+}
+
+
+roc_val <- c()
+t1 <- 12
+t2 <- 36
+t3 <- 60
+
+fac <- c("DFS","DFSDAYS","Riskscore","Riskscore_diff","yN","CEA_1c","yTNM","Split")
+mydata <- Feature_All[,fac]
+mydata <- mydata[complete.cases(mydata),]
+Index_LORC <- which(mydata$Split == "LORC")
+Index_Train <- which(mydata$Split == "Train")
+Index_TestInt <- which(mydata$Split == "TestInt")
+Index_TestExt <- which(mydata$Split == "TestExt")
+
+
+# yTNM
+fac <- c("yTNM")
+roc_val <- cindex_data(fac,mydata)
+
+
+# Cli
+
+fac <- c("CEA_1c","yN")
+roc_val <- cindex_data(fac,mydata)
+
+# Riskscore_diff
+fac <- c("Riskscore_diff")
+roc_val <- cindex_data(fac,mydata)
+
+
+# Riskscore
+
+fac <- c("Riskscore")
+roc_val <- cindex_data(fac,mydata)
+
+
+# diff
+
+fac <- c("CEA_1c","Riskscore_diff")
+roc_val <- cindex_data(fac,mydata)
+
+# Radiomis
+fac <- c("CEA_1c","yN","Riskscore")
+roc_val <- cindex_data(fac,mydata)
+
+# Radiomis
+fac <- c("CEA_1c","yN","Riskscore")
+roc_val <- cindex_data(fac,mydata)
+
+a <- as.data.frame(matrix (roc_val, nrow =12,byrow =FALSE))
+
+
+#save
+
+
+write.xlsx(a , "E:/Qian/ProjectAge/Data/Data_Excel/roc_val.xlsx")
+
+
+
+```
+
+# 7 nomogram
+```{r}
+library(survival)
+library(rms)
+library(DynNom)
+
+mydata <- Feature_All[Index_Train, c("CEA_1","differentiation","yTNM","yN", "DFS", "DFSDAYS","Riskscore")]
+names(mydata) <- c("CEA","Differentiation","yTNM","yN", "DFS", "DFSDAYS","Riskscore")
+mydata$CEA <- as.factor(ifelse(mydata$CEA == "negative","Negative", "Positive"))
+mydata$Differentiation <- as.factor(ifelse(mydata$Differentiation == "negative","Well/Moderately", "Poor/Undifferentiated"))
+mydata$yN <- as.factor(ifelse(mydata$yN == "negative","Negative", "Positive"))
+
+
+#mydata <- mydata[complete.cases(mydata),]
+ddist <- datadist(mydata)
+options(datadist='ddist')
+
+tmp_f <- cph(Surv(DFSDAYS, DFS == 1)~CEA+yN+Riskscore, data=mydata, x=T, y=T, surv=T)
+summary(tmp_f)
+surv <- Survival(tmp_f)
+med <- Quantile(tmp_f)
+
+nomo <- nomogram(tmp_f, fun=list(function(x) surv(12, x),
+                          function(x) surv(12*3, x),
+                          function(x) surv(12*5, x)),
+                funlabel=c("1-year Survival Probability", 
+                           "3-year Survival Probability",
+                           "5-year Survival Probability"),
+                fun.at=c(0.05, seq(0.1, 0.9, by = 0.2),0.95))
+
+plot(nomo, cex.axis=0.5, cex.var = 1)
+
+showtext_auto(enable=T)
+pdf("Nomogram_imag.pdf")
+plot(nomo, cex.axis=0.8, cex.var = 1)
+while (!is.null(dev.list())) dev.off() 
+showtext_auto(enable=F)
+#DynNom(tmp_f, mydata)
+
+```
+
+# 9 Decision Curve
+```{r}
+library(rms)
+library(ggDCA)
+#BiocManager::install("ggDCA")
+
+mydata <- Feature_All[Index_Train,]
+ddist <- datadist(mydata)
+options(datadist='ddist')
+f1 <- cph(Surv(DFSDAYS, DFS == 1)~yTNM, data=mydata, x=T, y=T, surv=T)
+f2 <- cph(Surv(DFSDAYS, DFS == 1)~CEA_1+yN, data=mydata, x=T, y=T, surv=T)
+f3 <- cph(Surv(DFSDAYS, DFS == 1)~Riskscore_diff, data=mydata, x=T, y=T, surv=T)
+f4 <- cph(Surv(DFSDAYS, DFS == 1)~Riskscore, data=mydata, x=T, y=T, surv=T)
+f5 <- cph(Surv(DFSDAYS, DFS == 1)~CEA_1+Riskscore_diff, data=mydata, x=T, y=T, surv=T)
+f6 <- cph(Surv(DFSDAYS, DFS == 1)~CEA_1+yN+Riskscore, data=mydata, x=T, y=T, surv=T)
+
+dcacurve <- dca(f6,f1, f2, f3,f4, f5, model.names=c("Difference-based Radiomics signature","EORC-based Radiomics signature", "clinicopathology nomogram","Radiomics nomogram","Difference-Baded" ))
+
+ggplot(dcacurve)
+
+
+showtext_auto(enable=T)
+pdf("Figure_dca.pdf",width=15,height=10)
+dcacurve <- dca(f6, f1, f2, f3,f4,f5,  model.names=c("Radiomics nomogram",
+                                                     "pTNM", "clinicopathology nomogram", 
+                                                     "Difference-based Radiomics signature","EORC-based Radiomics signature",
+                                                     "Difference-Baded" ))
+
+ggplot(dcacurve)
+
+while (!is.null(dev.list())) dev.off() 
+showtext_auto(enable=F)
+
+```
+
+# 10 Cor Heatmap # 特征单因素分析
+```{r}
+library(corrplot)
+library(RColorBrewer)
+library(pheatmap)
+
+fac <- c("T2_wavelet.LHH_firstorder_Median","DWI_wavelet.LLL_firstorder_Skewness", "T2_wavelet.LLH_glcm_JointEntropy", 
+         "DWI_original_shape_Sphericity"  ,"DWI_wavelet.LLL_glcm_Correlation","DWI_wavelet.HHL_gldm_LargeDependenceHighGrayLevelEmphasis",
+         "age","gender","BMI","location","cTNM","cT","cN","CEA_1","CA199_1","differentiation","yT","yN", "LVI","pre_chemo", "post_chemo")
+
+mydata <- Feature_All
+mydata <- mydata[,fac]
+mydata[,c(1:ncol(mydata))] <- lapply(mydata[,c(1:ncol(mydata))], as.numeric)
+names(mydata) <- c("Feature 1","Feature 2" ,"Feature 3"  ,"Feature 4"  ,"Feature 5","Feature 6","Age","Gender","BMI","Location","cTNM","cT","cN","CEA","CA199","Differentiation","yT","yN", "LVI","Neoadjuvant therpay", "Adjuvant therapy")
+#mydata <- mydata[,c(1:6)]
+
+corr <- cor(mydata,method = "spearman",use="pairwise.complete.obs")
+
+col = colorRampPalette(rev(brewer.pal(n = 7, name ="RdYlBu")))(100)
+corrplot(corr, method = "square", tl.cex = 0.6, tl.col = "black",type = "upper", cl.pos = "r", tl.pos="lt",tl.srt = 45)
+corrplot(corr, method = "pie", tl.cex = 0.6, tl.col = "black",type = "lower", add = TRUE, tl.pos="n")
+
+showtext_auto(enable=T)
+pdf("Corplot.pdf")
+corrplot(corr, method = "square", tl.cex = 0.6, tl.col = "black",type = "upper", cl.pos = "r", tl.pos="lt",tl.srt = 45)
+corrplot(corr, method = "pie", tl.cex = 0.6, tl.col = "black",type = "lower", add = TRUE, tl.pos="n")
+while (!is.null(dev.list())) dev.off() 
+showtext_auto(enable=F)
+
+univ_results <- lapply(univ_models,
+                       function(x){ 
+                         x <- summary(x)
+                         coef <- x[["coefficients"]]
+                         conf <- x[["conf.int"]]
+                         res <- cbind(coef, conf)
+                         return(res)
+                       })
+
+
+## mdc
+names(corr) <- c("Feature 1","Feature 2" ,"Feature 3"  ,"Feature 4"  ,"Feature 5","Feature 6","Age","Gender","BMI","Location","cTNM","cT","cN","CEA","CA199","Differentiation","yT","yN", "LVI","Neoadjuvant therpay", "Adjuvant therapy")
+row.names(corr) <- c("Feature 1","Feature 2" ,"Feature 3"  ,"Feature 4"  ,"Feature 5","Feature 6","Age","Gender","BMI","Location","cTNM","cT","cN","CEA","CA199","Differentiation","yT","yN", "LVI","Neoadjuvant therpay", "Adjuvant therapy")
+bk <- c(seq(0.10,0.49,by=0.01),seq(0.5,0.90,by=0.01))
+tmp <- pheatmap(corr,cellwidth = 30, cellheight = 30, number_format = "%.2f",fontsize=16,
+         display_numbers = TRUE, cluster_cols=F,cluster_rows = F,angle_col = 315,fontfamily= "A",face = "bold",
+         color = c(colorRampPalette(rev(brewer.pal(n = 7, name ="RdYlBu")))(100)[10:49],
+                    colorRampPalette(rev(brewer.pal(n = 7, name ="RdYlBu")))(100)[50:90]),
+         legend_breaks = seq(from=-1,to=1,by=0.4),breaks = bk)
+tmp
+ggsave("cross_pvalue_all.bmp",tmp,width = 20, height = 20)
+
+bk <- c(seq(-1,-0.60,by=0.01),seq(-0.59,0.59,by=0.01),seq(0.6,1,by=0.01))
+tmp <- pheatmap(corr,cellwidth = 30, cellheight = 30, number_format = "%.2f",fontsize=16,
+         display_numbers = TRUE, cluster_cols=F,cluster_rows = F,angle_col = 315,fontfamily= "A",face = "bold",
+         color = c(colorRampPalette(rev(brewer.pal(n = 7, name ="RdYlBu")))(200)[1:39],
+                    colorRampPalette(rev(brewer.pal(n = 7, name ="RdYlBu")))(200)[40:160],
+                    colorRampPalette(rev(brewer.pal(n = 7, name ="RdYlBu")))(200)[161:200]),
+         legend_breaks = seq(from=-1,to=1,by=0.4),breaks = bk)
+tmp
+ggsave("cross_pvalue_all.bmp",tmp,width = 20, height = 20)
+
+
+# 特征单因素分析
+mydata <- Feature_All
+mydata <- mydata[,fac]
+mydata[,c(1:ncol(mydata))] <- lapply(mydata[,c(1:ncol(mydata))], as.numeric)
+names(mydata) <- c("Feature_1","Feature_2" ,"Feature_3"  ,"Feature_4"  ,"Feature_5","Age","Gender","BMI","Location","cTNM","cT","cN","CEA","CA199","Differentiation", "yTNM","yT","yN", "LVI","Neoadjuvant therpay", "Adjuvant therapy","DFS","OS","DFSDAYS","OSDAYS")
+tmp_mydata <- mydata
+
+fac <- c("Feature_1","Feature_2" ,"Feature_3"  ,"Feature_4"  ,"Feature_5")
+univ_results <- lapply(fac,
+                       function(x){ 
+                        mydata <- tmp_mydata[Index_Train, ]
+                        tmp_formula <- as.formula(paste('Surv(DFSDAYS, DFS)~', "Feature_5"))
+                        multi_models<- coxph(tmp_formula, data =  mydata)
+                        summary(multi_models)
+                        
+                        Cindex <- data.frame()
+                        mydata <- tmp_mydata[Index_Train, ]
+                        fp <- predict(multi_models, mydata)
+                        tmp_C=rcorr.cens(fp, Surv(mydata$DFSDAYS, mydata$DFS == 1))
+                        Cindex[1,1] <- 1-tmp_C[1]
+                        Cindex[1,2]<- 1-tmp_C[1]-0.98*tmp_C[3]
+                        Cindex[1,3]<- 1-tmp_C[1]+0.98*tmp_C[3]
+                        mydata <- tmp_mydata[Index_TestInt, ]
+                        fp <- predict(multi_models, mydata)
+                        tmp_C=rcorr.cens(fp, Surv(mydata$DFSDAYS, mydata$DFS == 1))
+                        Cindex[2,1]  <- 1-tmp_C[1]
+                        Cindex[2,2] <- 1-tmp_C[1]-0.98*tmp_C[3]
+                        Cindex[2,3] <- 1-tmp_C[1]+0.98*tmp_C[3]
+                        mydata <- tmp_mydata[Index_TestExt, ]
+                        fp <- predict(multi_models, mydata)
+                        tmp_C=rcorr.cens(fp, Surv(mydata$DFSDAYS, mydata$DFS == 1))
+                        Cindex[3,1]  <- 1-tmp_C[1]
+                        Cindex[3,2] <- 1-tmp_C[1]-0.98*tmp_C[3]
+                        Cindex[3,3] <- 1-tmp_C[1]+0.98*tmp_C[3]
+                        Cindex[3,1]
+                        colnames(Cindex) <- c("Corcord", "Lower", "Upper")
+                        row.names(Cindex) <- c("train", "testint", "testext")
+                        Cindex <- round(Cindex, digits = 2)
+                        Cindex$HR <- paste0(Cindex[,1],"[",Cindex[,2],",",Cindex[,3],"]")
+                        res <- data.frame(t(Cindex$HR))
+                        return(res)
+                       })
+
+tmp_result<- do.call(rbind, univ_results)
+
+```
+
+# 11 NRI IDI
+```{r}
+library(nricens)
+library(survIDINRI)
+library(PredictABEL)
+
+mydata <- Feature_All[Index_Train,c("DFS", "DFSDAYS","CEA_1",
+                                    "yN","Riskscore", "Riskscore_diff","yTNM")]
+mydata <- Feature_All[Index_TestInt,c("DFS", "DFSDAYS","CEA_1",
+                                    "yN","Riskscore", "Riskscore_diff","yTNM")]
+mydata <- Feature_All[Index_TestExt,c("DFS", "DFSDAYS","CEA_1",
+                                    "yN","Riskscore", "Riskscore_diff","yTNM")]
+
+
+mydata$DFSDAYS <- mydata$DFSDAYS*30
+mydata <- mydata[complete.cases(mydata),]
+
+f1 <- coxph(Surv(DFSDAYS, DFS == 1)~yTNM, data=mydata, x=TRUE)
+f2 <- coxph(Surv(DFSDAYS, DFS == 1)~CEA_1+yN, data=mydata, x=TRUE)
+f3 <- coxph(Surv(DFSDAYS, DFS == 1)~Riskscore_diff, data=mydata, x=TRUE)
+f4 <- coxph(Surv(DFSDAYS, DFS == 1)~Riskscore, data=mydata, x=TRUE)
+f5 <- coxph(Surv(DFSDAYS, DFS == 1)~CEA_1+Riskscore_diff, data=mydata, x=TRUE)
+f6 <- coxph(Surv(DFSDAYS, DFS == 1)~CEA_1+yN+Riskscore, data=mydata, x=TRUE)
+
+p1= get.risk.coxph(f1, t0=1825)
+p2= get.risk.coxph(f2, t0=1825)
+p3= get.risk.coxph(f3, t0=1825)
+p4= get.risk.coxph(f4, t0=1825)
+p5= get.risk.coxph(f5, t0=1825)
+p6= get.risk.coxph(f6, t0=1825)
+
+sink("res.txt") 
+## P6
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p1, predrisk2=p6,
+                 cutoff=c(0,0.35,1))
+
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p2, predrisk2=p6,
+                 cutoff=c(0,0.35,1))
+
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p3, predrisk2=p6,
+                 cutoff=c(0,0.35,1))
+
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p4, predrisk2=p6,
+                 cutoff=c(0,0.35,1))
+
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p5, predrisk2=p6,
+                 cutoff=c(0,0.35,1))
+
+## P5
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p1, predrisk2=p5,
+                 cutoff=c(0,0.35,1))
+
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p2, predrisk2=p5,
+                 cutoff=c(0,0.35,1))
+
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p3, predrisk2=p5,
+                 cutoff=c(0,0.35,1))
+
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p4, predrisk2=p5,
+                 cutoff=c(0,0.35,1))
+
+## P4
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p1, predrisk2=p4,
+                 cutoff=c(0,0.35,1))
+
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p2, predrisk2=p4,
+                 cutoff=c(0,0.35,1))
+
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p3, predrisk2=p4,
+                 cutoff=c(0,0.35,1))
+
+## P3
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p1, predrisk2=p3,
+                 cutoff=c(0,0.35,1))
+
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p2, predrisk2=p3,
+                 cutoff=c(0,0.35,1))
+
+## P2
+reclassification(data= mydata,cOutcome=1,
+                 predrisk1=p1, predrisk2=p2,
+                 cutoff=c(0,0.35,1))
+
+sink() 
+
+
+```
+
+# 12 Calibration Curve
+```{r}
+library(rms)
+library(pROC)
+library(ggplot2)
+library(ggDCA)
+
+
+mydata <- Feature_All[Index_TestExt,-c(36,37,38)]
+mydata$DFSDAYS <- mydata$DFSDAYS*30
+ddist <- datadist(mydata)
+options(datadist='ddist')
+
+time_sur <- 365*1
+f1 <- cph(Surv(DFSDAYS, DFS == 1)~Riskscore, data=mydata, x=T, y=T, surv=T, time.inc = time_sur)
+f2 <- cph(Surv(DFSDAYS, DFS == 1)~CEA_1+yN, data=mydata, x=T, y=T, surv=T, time.inc = time_sur)
+
+
+
+time_sur <- 365*1
+f3 <- cph(Surv(DFSDAYS, DFS == 1)~CEA_1+yN+Riskscore, data=mydata, x=T, y=T, surv=T, time.inc = time_sur)
+calcurve <- calibrate(f3, u=time_sur, cmethod='KM', m=10, B=200)# usually B=200 or 300
+
+time_sur <- 365*3
+f32 <- cph(Surv(DFSDAYS, DFS == 1)~CEA_1+yN+Riskscore, data=mydata, x=T, y=T, surv=T, time.inc = time_sur)
+calcurve2 <- calibrate(f32, u=time_sur, cmethod='KM', m=10, B=1000)# usually B=200 or 300
+
+time_sur <- 365*5
+f33 <- cph(Surv(DFSDAYS, DFS == 1)~CEA_1+yN+Riskscore, data=mydata, x=T, y=T, surv=T, time.inc = time_sur)
+calcurve3 <- calibrate(f33, u=time_sur, cmethod='KM', m=10, B=1000)# usually B=200 or 300
+
+plot(calcurve,lwd=2,lty=1, ##设置线条形状和尺寸
+     errbar.col=c(rgb(0,118,192,maxColorValue = 255)), ##设置一个颜色
+     xlab='Nomogram-Predicted Probability of 3 years OS',#便签
+     ylab='Actual 1 years OS(proportion)',#标签
+     col="red",#设置一个颜色
+     xlim = c(0,1),ylim = c(0,1)##x轴和y轴范围
+     ) #控制坐标轴的位置
+
+plot(calcurve2,lwd=2,lty=1, ##设置线条形状和尺寸
+     errbar.col=c(rgb(0,118,192,maxColorValue = 255)), ##设置一个颜色
+     xlab='Nomogram-Predicted Probability of 3 years OS',#便签
+     ylab='Actual 1 years OS(proportion)',#标签
+     col="green",#设置一个颜色
+     xlim = c(0,1),ylim = c(0,1), ##x轴和y轴范围
+     add = T) #控制坐标轴的位置
+
+plot(calcurve3,lwd=2,lty=1, ##设置线条形状和尺寸
+     errbar.col=c(rgb(0,118,192,maxColorValue = 255)), ##设置一个颜色
+     xlab='Nomogram-Predicted Probability of 3 years OS',#便签
+     ylab='Actual 1 years OS(proportion)',#标签
+     col="blue",#设置一个颜色
+     xlim = c(0,1),ylim = c(0,1), ##x轴和y轴范围
+     add = T) #控制坐标轴的位置
+
+
+
+showtext_auto(enable=T)
+pdf("Figure_res_calibration.pdf")
+plot(calcurve,lwd=2,lty=1, ##设置线条形状和尺寸
+     errbar.col=c(rgb(0,118,192,maxColorValue = 255)), ##设置一个颜色
+     xlab='Nomogram-Predicted Probability of 3 years OS',#便签
+     ylab='Actual 1 years OS(proportion)',#标签
+     col="red",#设置一个颜色
+     xlim = c(0,1),ylim = c(0,1)##x轴和y轴范围
+     ) #控制坐标轴的位置
+par(new=TRUE)
+plot(calcurve2,lwd=2,lty=1, ##设置线条形状和尺寸
+     errbar.col=c(rgb(0,118,192,maxColorValue = 255)), ##设置一个颜色
+     xlab='Nomogram-Predicted Probability of 3 years OS',#便签
+     ylab='Actual 1 years OS(proportion)',#标签
+     col="green",#设置一个颜色
+     xlim = c(0,1),ylim = c(0,1), ##x轴和y轴范围
+     add = F) #控制坐标轴的位置
+par(new=TRUE)
+plot(calcurve3,lwd=2,lty=1, ##设置线条形状和尺寸
+     errbar.col=c(rgb(0,118,192,maxColorValue = 255)), ##设置一个颜色
+     xlab='Nomogram-Predicted Probability of 3 years OS',#便签
+     ylab='Actual 1 years OS(proportion)',#标签
+     col="blue",#设置一个颜色
+     xlim = c(0,1),ylim = c(0,1), ##x轴和y轴范围
+     add = F) #控制坐标轴的位置
+
+while (!is.null(dev.list())) dev.off() 
+showtext_auto(enable=F)
+
+```
+
+
+
+# 13 violine box
+```{r}
+
+library(ggplot2)
+library(ggpubr)
+library(ggstatsplot)
+library(tidyverse)
+library(ggstatsplot)
+
+if (require("PMCMRplus")) {
+    # to get reproducible results from bootstrapping
+    set.seed(1)
+    library(ggstatsplot)
+    library(dplyr, warn.conflicts = FALSE)
+    library(ggplot2)
+    
+    grouped_ggbetweenstats(data = mydata, 
+                           x = agegroup, y = Value, grouping.var = feature)
+
+
+}
+
+
+mydata <- Feature_All
+fac <- c("DWI_original_firstorder_Kurtosis","DWI_original_firstorder_Skewness",
+         "T2_original_firstorder_Entropy","T2_original_firstorder_Median",
+         "T2_original_firstorder_Variance","T2_original_firstorder_Uniformity",'agegroup')
+
+
+age_group <- Feature_All$agegroup
+wilcox.test(as.numeric(Feature_All[,"DWI_original_firstorder_Kurtosis"])~age_group, data=Feature_All)
+wilcox.test(as.numeric(Feature_All[,"DWI_original_firstorder_Skewness"])~age_group, data=Feature_All)
+wilcox.test(as.numeric(Feature_All[,"T2_original_firstorder_Entropy"])~age_group, data=Feature_All)
+wilcox.test(as.numeric(Feature_All[,"T2_original_firstorder_Median"])~age_group, data=Feature_All)
+wilcox.test(as.numeric(Feature_All[,"T2_original_firstorder_Variance"])~age_group, data=Feature_All)
+wilcox.test(as.numeric(Feature_All[,"T2_original_firstorder_Uniformity"])~age_group, data=Feature_All)
+res_tab <- descrTable(agegroup~., data = mydata, show.all = TRUE, digits = 2, method =  NA)
+res_tab
+
+mydata <- Feature_All[,c(fac,"agegroup")]
+mydata <- mydata %>% pivot_longer(cols = colnames(mydata)[1:6],
+                                  names_to = "feature", values_to = "Value")
+
+showtext_auto(enable=T)
+pdf("signature.pdf",width=15,height=10)
+grouped_ggbetweenstats(data = mydata, 
+                           x = agegroup, y = Value, grouping.var = feature)
+                       
+while (!is.null(dev.list())) dev.off() 
+showtext_auto(enable=F)
+
+
+
+
+
+ggplot(mydata, aes(x = feature,y = Value))+
+  geom_violin(aes(fill = agegroup),trim = FALSE)+ 
+  scale_fill_manual(values = c("#999999", "#E69F00"))+
+  theme_bw()
+
+
+```
+# 14 Denesity
+```{r}
+rm(list = ls())
+Feature_All <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Figure.xlsx", sheet=1) 
+Index_LORC <- which(Feature_All$Group == "LORC")
+Index_EORC <- which(Feature_All$Group == "EORC")
+
+median(Feature_All[Index_EORC, "Value"])
+median(Feature_All[Index_LORC, "Value"])
+
+
+ggplot(Feature_All, aes(x = Value, fill = Group)) +
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(text=element_text(size = 12, family = "A", face="bold"))+
+  # 密度曲线函数：alpha设置填充色透明度
+  geom_density(alpha = 0.3)
+
+
+showtext_auto(enable=T)
+pdf("Figure_Density.pdf")
+
+ggplot(Feature_All, aes(x = Value, fill = Group)) +
+  theme_bw()+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+  theme(text=element_text(size = 12, family = "A", face="bold"))+
+  # 密度曲线函数：alpha设置填充色透明度
+  geom_density(alpha = 0.3)
+
+while (!is.null(dev.list())) dev.off() 
+showtext_auto(enable=F)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

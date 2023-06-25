@@ -1,0 +1,926 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+# LoadPackages
+```{r}
+library(openxlsx)
+library(readr)
+library(irr)
+library(openxlsx)
+library(caret)
+library(glmnet)
+library(MASS)
+library(ggplot2)
+library(survival)
+library(Hmisc)
+library(ROSE)
+library(survminer)
+library(compareGroups)
+
+library(pROC)
+
+library(gcookbook)
+library(OptimalCutpoints)
+library(ggpubr)
+library(showtext)
+
+font_add('Araial','/Library/Fonts/Arial.ttf')
+
+windowsFonts(A=windowsFont("Araial")) 
+rm(list = ls())
+
+
+
+```
+
+# 1.1 Fature Bind: LiuYuan 
+```{r}
+rm(list = ls())
+feature_DWI <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/LiuYuan_RadiomicsFeature_DWI.xlsx", sheet=1)
+feature_T2 <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/LiuYuan_RadiomicsFeature_T2.xlsx", sheet=1)
+feature_CLI <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/LiuYuan_Fix.xlsx", sheet=1)
+
+feature_CLI <- feature_CLI[feature_CLI$group==0,]
+feature_CLI[,2] <- as.numeric(unlist(feature_CLI[,2]))
+feature_DWI[,1]<- as.numeric(unlist(feature_DWI[,1]))
+feature_T2[,1] <- as.numeric(unlist(feature_T2[,1]))
+
+ALL <- data.frame(feature_DWI, feature_T2)
+feature_All <- merge(ALL, feature_CLI, by="patientname")
+Feature_LiuYuan <- feature_All
+Feature_LiuYuan$group <- 'LiuYuan'
+
+```
+
+# 1.2 Fature Bind: SanYuan
+```{r}
+feature_DWI <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/SanYuan_RadiomicsFeature_DWI.xlsx", sheet=1)
+feature_T2 <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/SanYuan_RadiomicsFeature_T2.xlsx", sheet=1)
+feature_CLI <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/SanYuan_Fix.xlsx", sheet=1)
+
+feature_CLI <- feature_CLI[feature_CLI$group==0,]
+feature_CLI[,2] <- as.numeric(unlist(feature_CLI[,2]))
+feature_DWI[,1]<- as.numeric(unlist(feature_DWI[,1]))
+feature_T2[,1] <- as.numeric(unlist(feature_T2[,1]))
+
+ALL <- data.frame(feature_DWI, feature_T2)
+feature_All <- merge(ALL, feature_CLI, by="patientname")
+Feature_SanYuan <- feature_All
+Feature_SanYuan$group <- 'SanYuan'
+
+```
+
+# 1.3 Fature Bind: YunNan
+```{r}
+feature_DWI <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/YunNan_RadiomicsFeature_DWI.xlsx", sheet=1)
+feature_T2 <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/YunNan_RadiomicsFeature_T2.xlsx", sheet=1)
+feature_CLI <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/YunNan_Fix.xlsx", sheet=1)
+
+feature_CLI <- feature_CLI[feature_CLI$group==0,]
+feature_CLI[,2] <- as.numeric(unlist(feature_CLI[,2]))
+feature_DWI[,1]<- as.numeric(unlist(feature_DWI[,1]))
+feature_T2[,1] <- as.numeric(unlist(feature_T2[,1]))
+
+ALL <- data.frame(feature_DWI, feature_T2)
+feature_All <- merge(ALL, feature_CLI, by="patientname")
+Feature_YunNan <- feature_All
+Feature_YunNan$group <- 'YunNan'
+
+```
+
+# 1.4 Save Feature_Bind
+```{r}
+
+Feature_All <- rbind(Feature_LiuYuan, Feature_SanYuan, Feature_YunNan)
+Feature_All$agegroup <- ifelse(Feature_All$age < 50, "<50", ">=50")
+
+write.xlsx(Feature_All, "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Bind.xlsx")
+
+```
+
+
+# 2.1 ICC Index
+```{r}
+rm(list = ls())
+feature_1 = read.xlsx("E:/Qian/ProjectAGE/Data/Data_Excel/ICC_org/Data_ICC.xlsx",sheet=1 )
+feature_2 = read.xlsx("E:/Qian/ProjectAGE/Data/Data_Excel/ICC_org/Data_ICC.xlsx",sheet=2 )
+
+len = length(names(feature_1))
+icc_val <- vector(length=len)
+thr <- 0.75
+icc_val<-vector(length=len)
+for (i in 1:len){
+  rating <- cbind(as.numeric(feature_1[,i]),as.numeric(feature_2[,i]))
+  icc_vals <- icc(rating, 
+                 model='twoway', type='agreement', unit='single',
+                 r0=0, conf.level=0.95)
+  icc_val[i] <- icc_vals$value
+ 
+}
+icc_val[c(1:37, 1256:1293)] <- 0
+
+index <- which(icc_val >= thr)
+length(index)
+
+
+dim(icc_val)=c(1,len)
+icc_val_save <- icc_val
+icc_val_save [icc_val_save < thr] <- 0
+icc_val_save [icc_val_save >= thr] <- 1
+write.csv(icc_val_save,file = "E:/Qian/ProjectAGE/Data/Data_Excel/ICC_org/Data_ICC_value.csv",row.names = F)
+
+```
+
+# 2.2 Save ICC Feature
+```{r}
+# Load Data
+Feature_All <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Bind.xlsx", sheet=1) # 手动调整第一列
+
+nume <- as.numeric(which(names(Feature_All) == "patientname"))
+Index_IMG <- c(1:(nume-1))
+Index_CLI <- c(nume:length(Feature_All))
+
+Index_ICC <- which(icc_val_save == 1)
+Feature_IMG <- Feature_All[, Index_IMG]
+Feature_CLI <- Feature_All[, Index_CLI]
+
+Feature_IMG <- Feature_IMG[, Index_ICC]
+
+# Save Result
+Feature_All <- data.frame(Feature_IMG, Feature_CLI)
+write.xlsx(Feature_All, "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_ICC.xlsx")
+
+```
+
+# 3 Split Data
+```{r}
+rm(list = ls())
+set.seed("312") 
+Feature_All <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_ICC.xlsx", sheet=1)# 手动排序
+MRI_date <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/MRI_date.xlsx", sheet=1)
+Feature_All <- Feature_All[-c(1,5,7,8,197, 308,309,311,313,336,337,340,343,360,362,363,
+                      126,301,306,315,430,893),]
+
+Index_LORC <- which(Feature_All$agegroup == ">=50")
+Index_EORC <- which(Feature_All$agegroup == "<50")
+
+Feature_LORC <- Feature_All[Index_LORC, ]
+Feature_EORC <- Feature_All[Index_EORC, ]
+
+Index_LiuYuan <- which(Feature_EORC$group == "LiuYuan" )
+Index_TestExt <- which(!(Feature_EORC$group == "LiuYuan"))
+
+# mydata <- Feature_All[Index_LiuYuan, ]#
+
+tmp <- Feature_EORC[Index_LiuYuan, ]
+tmp_data <- merge(tmp,MRI_date, by="patientname")
+n1=65
+n2=nrow(tmp)
+Index_Train <- order(tmp_data$time)[1:(n2-n1)]
+Index_TestInt <- order(tmp_data$time)[(n2-n1+1):n2]
+
+Feature_LORC$Split <- "LORC"
+Feature_EORC$Split <- "EORC"
+Feature_EORC[Index_Train, ]$Split <- "Train"
+Feature_EORC[Index_TestInt, ]$Split <- "TestInt"
+Feature_EORC[Index_TestExt, ]$Split <- "TestExt"
+
+Feature_All <- rbind(Feature_LORC, Feature_EORC)
+
+write.xlsx(Feature_All, "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Split.xlsx")
+
+```
+
+
+# 4 Difference Analysis
+# 4.1.1 Load Data
+```{r}
+rm(list = ls())
+Feature_All <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Split.xlsx", sheet=1) 
+
+Feature_All$agegroup <- ifelse(Feature_All$age <50, "<50", ">=50")
+
+nume <- as.numeric(which(names(Feature_All) == "patientname"))
+Index_IMG <- c(1:(nume-1))
+Index_CLI <- c(nume:length(Feature_All))
+
+Feature_IMG <- apply(Feature_All[,Index_IMG], 2, as.numeric)
+Feature_CLI <- Feature_All[, Index_CLI]
+
+Feature_Violin <- Feature_All
+
+```
+
+
+# 4.1.2 Wilcox_test
+```{r}
+
+number <- ncol(Feature_IMG) # N是特征的数量
+
+thr <- 0.05
+testresult<-vector(length=number)
+age_group <- Feature_All$agegroup
+
+for (i in 1:number){
+  tmpresult <- wilcox.test(as.numeric(Feature_IMG[,i])~age_group, data=Feature_IMG)
+  testresult[i] <- tmpresult$p.value
+}
+
+Index <- which(testresult < thr)
+length(Index)
+
+Feature_IMG <- Feature_IMG[,Index]
+colnames(Feature_IMG)
+
+write.csv(t(colnames(Feature_IMG)), "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Diff_feature_name.csv")
+
+
+Feature_All <- data.frame(Feature_IMG, Feature_CLI)
+write.xlsx(Feature_All, "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Diff.xlsx")
+
+```
+
+```{r}
+Feature_All <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Diff.xlsx", sheet=1)
+library(gtsummary)
+mydata <- Feature_All
+res_tab <- descrTable(agegroup~., data = mydata, show.all = TRUE, digits = 2, method =  NA)
+res_tab
+export2xls(res_tab, file="E:/Qian/ProjectAge/Data/Data_Excel/Table_df.xlsx")
+
+
+a <- mydata %>% tbl_summary(by = agegroup) %>% add_p() %>% add_overall()
+a
+```
+
+# 4.2.1 Load Diff Feature
+```{r}
+rm(list = ls())
+Feature_All <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Diff.xlsx", sheet=1)
+#Feature_All <- Feature_All[Feature_All$agegroup == "<50", ]
+
+nume <- c("OS", "DFS")
+Feature_All[nume] <- lapply(Feature_All[nume], as.numeric)
+
+nume <- as.numeric(which(names(Feature_All) == "patientname"))
+Index_IMG <- c(1:(nume-1))
+Index_CLI <- c(nume:length(Feature_All))
+
+Feature_IMG <- apply(Feature_All[,Index_IMG], 2, as.numeric)
+Feature_CLI <- Feature_All[, Index_CLI]
+
+Index_Train <- which(Feature_All$Split == "Train")
+Index_TestInt <- which(Feature_All$Split == "TestInt")
+Index_TestExt <- which(Feature_All$Split == "TestExt")
+
+```
+
+# 4.2.2 Scale
+```{r}
+
+Train_IMG <- Feature_IMG[Index_Train, ]
+  
+stand_scale <- preProcess(Train_IMG)  # 默认为scale， 即均值方差（X-MU)/STD
+#stand_scale <- preProcess(Feature_IMG, method = "range")   # 最大最小归一化
+Feature_IMG <- predict(stand_scale, Feature_IMG)
+
+Feature_All <- data.frame(Feature_IMG, Feature_CLI)
+
+```
+
+# 4.2.3 Uni_Cox
+```{r}
+mydata <- Feature_All[Index_Train, ]
+testresult<-vector(length = length(Index_IMG))
+thr <- 0.05
+
+# 1256_1293
+
+IMG_num <- c(1:length(Index_IMG))
+nume <- c("OS", "DFS")
+mydata[nume] <- lapply(mydata[nume], as.numeric)
+
+for (i in IMG_num){
+  tmpresult <- coxph(Surv(DFSDAYS, DFS == 1)~mydata[,i], data = mydata)
+  tmp <- summary(tmpresult)
+  testresult[i] <- tmp[["waldtest"]][["pvalue"]]
+}
+Index <- which(testresult < thr)
+length(Index)
+
+Feature_IMG <- Feature_IMG[, Index]
+
+feature_name_violine <- colnames(Feature_IMG)
+
+```
+
+# 4.2.4 Correction
+```{r}
+
+Train_IMG <- Feature_IMG[Index_Train, ]
+  
+Index_Cor <- findCorrelation(cor(Train_IMG, Train_IMG, method = "spearman" ),0.8)
+colnames(Feature_IMG[,-Index_Cor])
+Feature_IMG <- Feature_IMG[,-Index_Cor]
+length(colnames(Feature_IMG))
+
+Feature_All <- data.frame(Feature_IMG, Feature_CLI)
+
+write.xlsx(Feature_All, "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Diff_Cor.xlsx")
+
+```
+
+
+# 4.3.1 Load Data
+```{r}
+rm(list = ls())
+Feature_All <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Diff_Cor.xlsx", sheet=1)
+
+Feature_All[Feature_All$yT == "T0",]$yT <- "negative"
+Feature_All[Feature_All$yT == "T1",]$yT <- "negative"
+Feature_All[Feature_All$yT == "T2",]$yT <- "negative"
+Feature_All[Feature_All$yT == "T3",]$yT <- "positive"
+Feature_All[Feature_All$yT == "T4",]$yT <- "positive"
+
+Feature_All$CEA_1 <- as.factor(ifelse(Feature_All$CEA_1 <=5,"negative", "positive"))
+
+nume <- c("OS", "DFS")
+Feature_All[nume] <- lapply(Feature_All[nume], as.numeric)
+
+nume <- as.numeric(which(names(Feature_All) == "patientname"))
+Index_IMG <- c(1:(nume-1))
+Index_CLI <- c(nume:length(Feature_All))
+
+Feature_IMG <- apply(Feature_All[,Index_IMG], 2, as.numeric)
+Feature_CLI <- Feature_All[, Index_CLI]
+
+Index_LORC <- which(Feature_All$Split == "LORC")
+Index_Train <- which(Feature_All$Split == "Train")
+Index_TestInt <- which(Feature_All$Split == "TestInt")
+Index_TestExt <- which(Feature_All$Split == "TestExt")
+
+```
+
+
+# 4.3.2 Muti_Cox
+```{r}
+
+mydata <- Feature_All[Index_Train,]
+
+tmp_y <- Surv(mydata$DFSDAYS, mydata$DFS == 1)
+tmp_x <- names(mydata)[Index_IMG]
+multi_formula <- as.formula(paste0 ("tmp_y~", paste0(tmp_x, collapse = "+")))
+multi_formula
+
+multi_models<- coxph(multi_formula, data =  mydata)
+step_models <- stepAIC(multi_models, direction = "both")
+summary(step_models)
+
+
+coef_matrix <- as.data.frame(t(as.matrix(coef(step_models))))
+#coef_matrix <- sort(coef_matrix,decreasing = T)[,1:5]
+Feature_IMG <- Feature_IMG[, colnames(coef_matrix)]
+
+```
+
+
+# 4.3.3 Calculate RS
+```{r}
+
+data_train <- Feature_All[Index_Train,]
+
+feature_final <- vector(mode="numeric", length=nrow(data_train ))
+for (i in 1:length(coef_matrix)){
+  tmp_coef <- as.numeric(coef_matrix[i])
+  tmp_name <- colnames(coef_matrix)[i]
+  temp_feature <- as.numeric(data_train [,c(tmp_name)])*tmp_coef
+  feature_final <- feature_final+temp_feature
+}
+
+data_train$Riskscore <- feature_final
+data_train$RS_median <- ifelse(data_train$Riskscore >= median(data_train$Riskscore), "high", "low")
+RS_value <- median(data_train$Riskscore)
+cutoff_value<-surv_cutpoint(data_train, time="DFSDAYS", event="DFS", variables="Riskscore")
+data_train$RS_cutoff <- ifelse(data_train$Riskscore >= cutoff_value[["cutpoint"]][["cutpoint"]], 'high', 'low')
+
+# calculate Riskscore
+library(survminer)
+Feature_All <- as.data.frame(Feature_All)
+feature_final <- vector(mode="numeric", length=nrow(Feature_All ))
+for (i in 1:length(coef_matrix)){
+   tmp_coef <- as.numeric(coef_matrix[i])
+   tmp_name <- colnames(coef_matrix)[i]
+   temp_feature <- as.numeric(Feature_All[,c(tmp_name)])*tmp_coef
+   feature_final <- feature_final+temp_feature
+}
+
+Feature_CLI$Riskscore <- feature_final
+Feature_CLI$RS_median <- ifelse(Feature_CLI$Riskscore >= RS_value, 'high', 'low')
+cutoff_value<-surv_cutpoint(data_train, time="DFSDAYS", event="DFS", variables="Riskscore")
+Feature_CLI$RS_cutoff <- ifelse(Feature_CLI$Riskscore >= cutoff_value[["cutpoint"]][["cutpoint"]], 'high', 'low')
+
+Feature_All <- data.frame(Feature_IMG, Feature_CLI)
+write.xlsx(Feature_All, "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Diff_Cox.xlsx")
+# 
+# showtext_auto(enable=T)
+# pdf("cutoff_value.pdf")
+# plot(cutoff_value, "Riskscore", palette = "lancet")
+# while (!is.null(dev.list())) dev.off() 
+# showtext_auto(enable=F)
+
+```
+
+# 4.3.4 C-Index
+```{r}
+# Riskscore
+
+
+cindex_f <- function(mydata,tmp_formu,i){
+  multi_models<- coxph(tmp_formu, data =  mydata)
+  fp <- predict(multi_models, mydata)
+  tmp_C=rcorr.cens(fp, Surv(mydata$DFSDAYS, mydata$DFS == 1))
+  Cindex[i,1]  <- 1-tmp_C[1]
+  Cindex[i,2] <- 1-tmp_C[1]-0.98*tmp_C[3]
+  Cindex[i,3] <- 1-tmp_C[1]+0.98*tmp_C[3]
+  Cindex[i,4] <- paste0(round(Cindex[i,1], digits = 2),"[",
+                        round(Cindex[i,2], digits = 2),",",
+                        round(Cindex[i,3], digits = 2),"]")
+  return(Cindex)
+  
+  
+}
+
+Cindex <- data.frame()
+tmp_formu <- as.formula('Surv(DFSDAYS, DFS == 1)~Riskscore')
+
+i=1
+mydata <- Feature_All[Index_Train, ]
+Cindex <- cindex_f(mydata,tmp_formu, i)
+
+i=2
+mydata <- Feature_All[Index_TestInt, ]
+Cindex <- cindex_f(mydata,tmp_formu, i)
+
+i=3
+mydata <- Feature_All[Index_TestExt, ]
+Cindex <- cindex_f(mydata,tmp_formu, i)
+
+i=4
+mydata <- Feature_All[Index_LORC, ]
+Cindex <- cindex_f(mydata,tmp_formu, i)
+
+colnames(Cindex) <- c("Corcord", "Lower", "Upper","C-index")
+row.names(Cindex) <- c("train", "testint", "testext","LORC")
+
+
+
+
+Cindex <- data.frame()
+tmp_formu <- as.formula('Surv(DFSDAYS, DFS == 1)~Riskscore+CEA_1+yN')
+
+i=1
+mydata <- Feature_All[Index_Train, ]
+Cindex <- cindex_f(mydata,tmp_formu, i)
+
+i=2
+mydata <- Feature_All[Index_TestInt, ]
+Cindex <- cindex_f(mydata,tmp_formu, i)
+
+i=3
+mydata <- Feature_All[Index_TestExt, ]
+Cindex <- cindex_f(mydata,tmp_formu, i)
+
+colnames(Cindex) <- c("Corcord", "Lower", "Upper","C-index")
+row.names(Cindex) <- c("train", "testint", "testext")
+
+```
+
+# 5 EORC Analysis
+# 5.1.1 Load Data
+```{r}
+rm(list = ls())
+Feature_All <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Split.xlsx", sheet=1)
+#Feature_All$agegroup <- ifelse(Feature_All$age <50, "<50", ">=50")
+#Feature_All <- Feature_All[Feature_All$agegroup == "<50", ]
+
+
+nume <- c("OS", "DFS")
+Feature_All[nume] <- lapply(Feature_All[nume], as.numeric)
+
+nume <- as.numeric(which(names(Feature_All) == "patientname"))
+Index_IMG <- c(1:(nume-1))
+Index_CLI <- c(nume:length(Feature_All))
+
+Feature_IMG <- apply(Feature_All[,Index_IMG], 2, as.numeric)
+Feature_CLI <- Feature_All[, Index_CLI]
+
+Index_Train <- which(Feature_All$Split == "Train")
+Index_TestInt <- which(Feature_All$Split == "TestInt")
+Index_TestExt <- which(Feature_All$Split == "TestExt")
+
+```
+
+# 5.2.1 Scale
+```{r}
+
+Train_IMG <- Feature_IMG[Index_Train, ]
+  
+stand_scale <- preProcess(Train_IMG)  # 默认为scale， 即均值方差（X-MU)/STD
+#stand_scale <- preProcess(Feature_IMG, method = "range")   # 最大最小归一化
+Feature_IMG <- predict(stand_scale, Feature_IMG)
+
+Feature_All <- data.frame(Feature_IMG, Feature_CLI)
+#write.xlsx(Feature_All, "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Scale.xlsx")
+
+```
+
+
+
+# 5.2.2 Uni_Cox
+```{r}
+mydata <- Feature_All[Index_Train, ]
+testresult<-vector(length = length(Index_IMG))
+thr <- 0.05
+
+# 1256_1293
+
+IMG_num <- c(1:length(Index_IMG))
+nume <- c("OS", "DFS")
+mydata[nume] <- lapply(mydata[nume], as.numeric)
+
+for (i in IMG_num){
+  tmpresult <- coxph(Surv(DFSDAYS, DFS == 1)~mydata[,i], data = mydata)
+  tmp <- summary(tmpresult)
+  testresult[i] <- tmp[["waldtest"]][["pvalue"]]
+}
+Index <- which(testresult < thr)
+length(Index)
+
+Feature_IMG <- Feature_IMG[, Index]
+
+```
+
+# 5.2.3 Correction
+```{r}
+
+Train_IMG <- Feature_IMG[Index_Train, ]
+  
+Index_Cor <- findCorrelation(cor(Train_IMG, Train_IMG, method = "spearman" ),0.8)
+colnames(Feature_IMG[,-Index_Cor])
+Feature_IMG <- Feature_IMG[,-Index_Cor]
+length(colnames(Feature_IMG))
+
+Feature_All <- data.frame(Feature_IMG, Feature_CLI)
+write.xlsx(Feature_All, "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Cor.xlsx")
+
+
+# a <- cor(Train_IMG, Train_IMG)
+# corrplot(a, method = "square", tl.cex = 0.6, tl.col = "black", cl.pos = "n", tl.pos="n",tl.srt = 45)
+# 
+# showtext_auto(enable=T)
+# pdf("Table1.pdf")
+# corrplot(a, method = "square", tl.cex = 0.6, tl.col = "black", cl.pos = "r", tl.pos="lt",tl.srt = 45)
+# while (!is.null(dev.list())) dev.off() 
+# showtext_auto(enable=F)
+
+```
+
+# 5.3.1 Load Data
+```{r}
+rm(list = ls())
+Feature_All <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Cor.xlsx", sheet=1)
+
+nume <- c("OS", "DFS")
+Feature_All[nume] <- lapply(Feature_All[nume], as.numeric)
+
+nume <- as.numeric(which(names(Feature_All) == "patientname"))
+Index_IMG <- c(1:(nume-1))
+Index_CLI <- c(nume:length(Feature_All))
+
+Feature_IMG <- apply(Feature_All[,Index_IMG], 2, as.numeric)
+Feature_CLI <- Feature_All[, Index_CLI]
+
+Index_Train <- which(Feature_All$Split == "Train")
+Index_TestInt <- which(Feature_All$Split == "TestInt")
+Index_TestExt <- which(Feature_All$Split == "TestExt")
+
+```
+
+
+
+# 5.3.2 Muti_Cox
+```{r}
+
+mydata <- Feature_All[Index_Train,]
+
+tmp_y <- Surv(mydata$DFSDAYS, mydata$DFS == 1)
+tmp_x <- names(mydata)[Index_IMG]
+multi_formula <- as.formula(paste0 ("tmp_y~", paste0(tmp_x, collapse = "+")))
+multi_formula
+
+multi_models<- coxph(multi_formula, data =  mydata)
+step_models <- stepAIC(multi_models, direction = "both")
+summary(step_models)
+
+
+coef_matrix <- as.data.frame(t(as.matrix(coef(step_models))))
+#coef_matrix <- sort(coef_matrix,decreasing = T)[,1:5]
+Feature_IMG <- Feature_IMG[, colnames(coef_matrix)]
+
+```
+
+
+
+# 5.3.3 Calculate RS
+```{r}
+
+data_train <- Feature_All[Index_Train,]
+
+feature_final <- vector(mode="numeric", length=nrow(data_train ))
+for (i in 1:length(coef_matrix)){
+  tmp_coef <- as.numeric(coef_matrix[i])
+  tmp_name <- colnames(coef_matrix)[i]
+  temp_feature <- as.numeric(data_train [,c(tmp_name)])*tmp_coef
+  feature_final <- feature_final+temp_feature
+}
+
+data_train$Riskscore <- feature_final
+data_train$RS_median <- ifelse(data_train$Riskscore >= median(data_train$Riskscore), "high", "low")
+RS_value <- median(data_train$Riskscore)
+cutoff_value<-surv_cutpoint(data_train, time="DFSDAYS", event="DFS", variables="Riskscore")
+data_train$RS_cutoff <- ifelse(data_train$Riskscore >= cutoff_value[["cutpoint"]][["cutpoint"]], 'high', 'low')
+
+# calculate Riskscore
+library(survminer)
+Feature_All <- as.data.frame(Feature_All)
+feature_final <- vector(mode="numeric", length=nrow(Feature_All ))
+for (i in 1:length(coef_matrix)){
+   tmp_coef <- as.numeric(coef_matrix[i])
+   tmp_name <- colnames(coef_matrix)[i]
+   temp_feature <- as.numeric(Feature_All[,c(tmp_name)])*tmp_coef
+   feature_final <- feature_final+temp_feature
+}
+
+Feature_CLI$Riskscore <- feature_final
+Feature_CLI$RS_median <- ifelse(Feature_CLI$Riskscore >= RS_value, 'high', 'low')
+cutoff_value<-surv_cutpoint(data_train, time="DFSDAYS", event="DFS", variables="Riskscore")
+Feature_CLI$RS_cutoff <- ifelse(Feature_CLI$Riskscore >= cutoff_value[["cutpoint"]][["cutpoint"]], 'high', 'low')
+
+Feature_All <- data.frame(Feature_IMG, Feature_CLI)
+write.xlsx(Feature_All, "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Cox.xlsx")
+
+# showtext_auto(enable=T)
+# pdf("cutoff_value.pdf")
+# plot(cutoff_value, "Riskscore", palette = "lancet")
+# while (!is.null(dev.list())) dev.off() 
+# showtext_auto(enable=F)
+
+```
+
+
+
+# 6 RC Analysis
+# 6.1.1 Load Data
+```{r}
+rm(list = ls())
+Feature_All <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Split.xlsx", sheet=1)
+#Feature_All$agegroup <- ifelse(Feature_All$age <50, "<50", ">=50")
+#Feature_All <- Feature_All[Feature_All$agegroup == "<50", ]
+
+
+nume <- c("OS", "DFS")
+Feature_All[nume] <- lapply(Feature_All[nume], as.numeric)
+
+nume <- as.numeric(which(names(Feature_All) == "patientname"))
+Index_IMG <- c(1:(nume-1))
+Index_CLI <- c(nume:length(Feature_All))
+
+Feature_IMG <- apply(Feature_All[,Index_IMG], 2, as.numeric)
+Feature_CLI <- Feature_All[, Index_CLI]
+
+Index_Train <- which(Feature_All$Split_All == "Train")
+Index_TestInt <- which(Feature_All$Split_All == "TestInt")
+Index_TestExt <- which(Feature_All$Split_All == "TestExt")
+
+```
+
+# 6.2.1 Scale
+```{r}
+
+Train_IMG <- Feature_IMG[Index_Train, ]
+  
+stand_scale <- preProcess(Train_IMG)  # 默认为scale， 即均值方差（X-MU)/STD
+#stand_scale <- preProcess(Feature_IMG, method = "range")   # 最大最小归一化
+Feature_IMG <- predict(stand_scale, Feature_IMG)
+
+Feature_All <- data.frame(Feature_IMG, Feature_CLI)
+#write.xlsx(Feature_All, "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Scale.xlsx")
+
+```
+
+
+
+# 6.2.2 Uni_Cox
+```{r}
+mydata <- Feature_All[Index_Train, ]
+testresult<-vector(length = length(Index_IMG))
+thr <- 0.05
+
+# 1256_1293
+
+IMG_num <- c(1:length(Index_IMG))
+nume <- c("OS", "DFS")
+mydata[nume] <- lapply(mydata[nume], as.numeric)
+
+for (i in IMG_num){
+  tmpresult <- coxph(Surv(DFSDAYS, DFS == 1)~mydata[,i], data = mydata)
+  tmp <- summary(tmpresult)
+  testresult[i] <- tmp[["waldtest"]][["pvalue"]]
+}
+Index <- which(testresult < thr)
+length(Index)
+#Index_rank <- rank(testresult[Index])
+
+Feature_IMG <- Feature_IMG[, Index]
+
+#Feature_IMG <- Feature_IMG[, Index_rank[c(1:68)]]
+
+```
+
+# 6.2.3 Correction
+```{r}
+
+Train_IMG <- Feature_IMG[Index_Train, ]
+  
+Index_Cor <- findCorrelation(cor(Train_IMG, Train_IMG, method = "spearman" ),0.8)
+colnames(Feature_IMG[,-Index_Cor])
+Feature_IMG <- Feature_IMG[,-Index_Cor]
+length(colnames(Feature_IMG))
+
+Feature_All <- data.frame(Feature_IMG, Feature_CLI)
+write.xlsx(Feature_All, "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Cor_All.xlsx")
+
+
+# a <- cor(Train_IMG, Train_IMG)
+# corrplot(a, method = "square", tl.cex = 0.6, tl.col = "black", cl.pos = "n", tl.pos="n",tl.srt = 45)
+# 
+# showtext_auto(enable=T)
+# pdf("Table1.pdf")
+# corrplot(a, method = "square", tl.cex = 0.6, tl.col = "black", cl.pos = "r", tl.pos="lt",tl.srt = 45)
+# while (!is.null(dev.list())) dev.off() 
+# showtext_auto(enable=F)
+
+```
+
+# 6.3.1 Load Data
+```{r}
+rm(list = ls())
+Feature_All <- read.xlsx("E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Cor_All.xlsx", sheet=1)
+
+nume <- c("OS", "DFS")
+Feature_All[nume] <- lapply(Feature_All[nume], as.numeric)
+
+nume <- as.numeric(which(names(Feature_All) == "patientname"))
+Index_IMG <- c(1:(nume-1))
+Index_CLI <- c(nume:length(Feature_All))
+
+Feature_IMG <- apply(Feature_All[,Index_IMG], 2, as.numeric)
+Feature_CLI <- Feature_All[, Index_CLI]
+
+Index_Train <- which(Feature_All$Split_All == "Train")
+Index_TestInt <- which(Feature_All$Split_All == "TestInt")
+Index_TestExt <- which(Feature_All$Split_All == "TestExt")
+
+```
+
+
+```{r}
+set.seed("12")
+mydata <- Feature_All[Index_Train,]
+
+tmp_y <- Surv(mydata$DFSDAYS, mydata$DFS == 1)
+tmp_x <- mydata[, Index_IMG]
+
+
+# no crDFSs validation alpha=1(LASSO) family=(binomial, gaussian)
+model_lasso <-  glmnet(data.matrix(tmp_x), tmp_y, family="cox", nlambda=30, alpha=1)
+plot(model_lasso,xvar="lambda",label=TRUE, cex.lab = 1.5, lwd=2)
+model_lasso
+
+# corss validation, type.measure=(mse, class, deviance)
+glm_cv <- cv.glmnet(data.matrix(tmp_x), tmp_y, family="cox", type.measure = "C", 
+                    nlambda=10, alpha=1, standardize=TRUE, nfolds = 3)
+
+plot(glm_cv, cex.lab = 1.5, lwd=20)
+glm_cv
+coef(glm_cv, s=glm_cv$lambda.min)
+
+#coef_matrix <- t(as.matrix(coef(glm_cv, s=glm_cv$lambda.min)))
+coef_matrix <- t(as.matrix(coef(glm_cv, s=glm_cv$lambda.1se)))
+Index_LASSO <- which(coef_matrix != 0)
+
+coef_matrix <- t(coef_matrix[, Index_LASSO])
+coef_matrix
+
+Feature_IMG <- Feature_IMG[, Index_LASSO]
+colnames(Feature_IMG)
+length(colnames(Feature_IMG))
+
+
+```
+
+
+
+
+# 6.3.2 Muti_Cox
+```{r}
+
+mydata <- Feature_All[Index_Train,]
+
+tmp_y <- Surv(mydata$DFSDAYS, mydata$DFS == 1)
+tmp_x <- names(mydata)[Index_IMG]
+multi_formula <- as.formula(paste0 ("tmp_y~", paste0(tmp_x, collapse = "+")))
+multi_formula
+
+multi_models<- coxph(multi_formula, data =  mydata)
+step_models <- stepAIC(multi_models, direction = "both")
+summary(step_models)
+
+#[,c(6,7,8,10,16,18)]
+coef_matrix <- as.data.frame(t(as.matrix(coef(step_models))))[,c(6,8,10,17,18)]
+#coef_matrix <- sort(coef_matrix,decreasing = T)[,1:5]
+Feature_IMG <- Feature_IMG[, colnames(coef_matrix)]
+
+```
+
+# 6.3.3 Calculate RS
+```{r}
+
+data_train <- Feature_All[Index_Train,]
+
+feature_final <- vector(mode="numeric", length=nrow(data_train ))
+for (i in 1:length(coef_matrix)){
+  tmp_coef <- as.numeric(coef_matrix[i])
+  tmp_name <- colnames(coef_matrix)[i]
+  temp_feature <- as.numeric(data_train [,c(tmp_name)])*tmp_coef
+  feature_final <- feature_final+temp_feature
+}
+
+data_train$Riskscore <- feature_final
+data_train$RS_median <- ifelse(data_train$Riskscore >= median(data_train$Riskscore), "high", "low")
+RS_value <- median(data_train$Riskscore)
+cutoff_value<-surv_cutpoint(data_train, time="DFSDAYS", event="DFS", variables="Riskscore")
+data_train$RS_cutoff <- ifelse(data_train$Riskscore >= cutoff_value[["cutpoint"]][["cutpoint"]], 'high', 'low')
+
+# calculate Riskscore
+library(survminer)
+Feature_All <- as.data.frame(Feature_All)
+feature_final <- vector(mode="numeric", length=nrow(Feature_All ))
+for (i in 1:length(coef_matrix)){
+   tmp_coef <- as.numeric(coef_matrix[i])
+   tmp_name <- colnames(coef_matrix)[i]
+   temp_feature <- as.numeric(Feature_All[,c(tmp_name)])*tmp_coef
+   feature_final <- feature_final+temp_feature
+}
+
+Feature_CLI$Riskscore <- feature_final
+Feature_CLI$RS_median <- ifelse(Feature_CLI$Riskscore >= RS_value, 'high', 'low')
+cutoff_value<-surv_cutpoint(data_train, time="DFSDAYS", event="DFS", variables="Riskscore")
+Feature_CLI$RS_cutoff <- ifelse(Feature_CLI$Riskscore >= cutoff_value[["cutpoint"]][["cutpoint"]], 'high', 'low')
+
+Feature_All <- data.frame(Feature_IMG, Feature_CLI)
+write.xlsx(Feature_All, "E:/Qian/ProjectAge/Data/Data_Excel/Data_org/Feature_Cox_All.xlsx")
+
+# showtext_auto(enable=T)
+# pdf("cutoff_value.pdf")
+# plot(cutoff_value, "Riskscore", palette = "lancet")
+# while (!is.null(dev.list())) dev.off() 
+# showtext_auto(enable=F)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
