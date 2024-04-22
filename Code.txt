@@ -1,0 +1,61 @@
+import os
+import numpy as np
+import pandas as pd
+import nibabel as nib
+import scipy.io as sio
+from radiomics import featureextractor
+import scipy.io as scio
+
+
+def mat2nii(mainpath):
+    filelist = os.listdir(mainpath)
+    total_num = len(filelist)
+    for i in range(total_num):
+        patientpath = os.path.join(mainpath, filelist[i])
+        imgpath = os.path.join(patientpath, 'imgb800.mat')
+        maskpath = os.path.join(patientpath, 'maskb800.mat')
+
+        # load image and mask
+        imgdata = sio.loadmat(imgpath)
+        imgdata = imgdata['RCimg']
+
+        new_image = nib.Nifti1Image(imgdata, np.eye(4))
+        nib.save(new_image, os.path.join(patientpath, 'imgb800.nii'))
+
+        maskdata = sio.loadmat(maskpath)
+        maskdata = maskdata['mask']
+
+        new_mask = nib.Nifti1Image(maskdata, np.eye(4))
+        nib.save(new_mask, os.path.join(patientpath, 'maskb800.nii'))
+
+
+def featureextract(mainpath):
+    filelist = os.listdir(mainpath)
+    total_num = len(filelist)
+    param_path = 'exampleMR_2mm_label1.yaml'
+    extractor = featureextractor.RadiomicsFeatureExtractor(param_path)
+    df = pd.DataFrame()
+
+    for i in range(total_num):
+        patientname = os.path.join(mainpath, filelist[i])
+        print(patientname)
+        imgname = os.path.join(patientname, 'imgb800.nii')
+        maskname = os.path.join(patientname, 'maskb800.nii')
+
+        # get feature
+        featureVector = extractor.execute(imageFilepath=imgname, maskFilepath=maskname)
+        df_add = pd.DataFrame.from_dict(featureVector.values()).T
+        df_add.columns = featureVector.keys()
+        df = pd.concat([df, df_add])
+
+    df.to_excel('RadiomicsFeature.xlsx')
+
+
+def main():
+    mainpath = 'E:/Project/ProjectCEA/Code/03_CalICC/DataICC/52'
+    featureextract(mainpath)
+
+
+
+if __name__ == "__main__":
+    main()
